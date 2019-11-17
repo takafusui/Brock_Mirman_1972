@@ -16,42 +16,64 @@ import matplotlib.pyplot as plt
 print(r"Version of Tensorflow is {}".format(tf.__version__))
 
 # --------------------------------------------------------------------------- #
-# Parameters
+# Parameter setting
 # --------------------------------------------------------------------------- #
-_alpha = 0.4  # Capital share
-_A = 1  # Technology level
-_beta = 0.96  # Discount factor
-
-with tf.name_scope('econ_params'):
-    alpha = tf.constant(_alpha, dtype=tf.float32, name='alpha')
-    A = tf.constant(_A, dtype=tf.float32, name='_A')
-    beta = tf.constant(_beta, dtype=tf.float32, name='beta')
+A = 1  # Technology level
+alpha = 0.3  # Capital share in the Cobb-Douglas production function
+beta = 0.95  # Discount factor
 
 
 # --------------------------------------------------------------------------- #
-# DNN structure
+# Analytical solution
 # --------------------------------------------------------------------------- #
-with tf.name_scope('neural_net'):
-    num_input = 1  # There is only one state variable: capital stock
-    # Two outputs: capital stock tomorrow and the Lagrange multiplier
-    num_output = 2
+def k_plus_analytic(k, alpha, beta, A):
+    """ Analytical solution
+    Return the optimal capital stock in the next period """
+    return alpha * beta * A * k**alpha
+
+
+# Setup the capital grid
+kbeg, kend, ksize = 1e-3, 3, 250
+kgrid = np.linspace(kbeg, kend, ksize, dtype=np.float32)
+
+# Capital stock in the next period
+k_plus = k_plus_analytic(kgrid, alpha, beta, A)
+
 # --------------------------------------------------------------------------- #
-# Create placeholder
+# Hyper parameters
 # --------------------------------------------------------------------------- #
-def create_placeholders(n_x):
-    "Create the placeholders for the tensorflow session"
-    X = tf.placeholder(tf.float32, shape=[n_x, None], name='X')
+# Layer setting
+num_input = 1
+num_hidden1 = 100
+num_hidden2 = 100
+num_output = 2
+layers_dim = [num_input, num_hidden1, num_hidden2, num_output]
+print("Dimensions of each layer are {}".format(layers_dim))
+
+learning_rate = 0.001  # Leargning rate
+t_lentgh = 10000  # Simulation length
+
+num_iters = 2500
+# --------------------------------------------------------------------------- #
+# Create placeholders, initialize parameters, forward propagation
+# --------------------------------------------------------------------------- #
+def create_placeholders(num_x):
+    """ Create the placeholders.
+    The column dimention is None that represents the length of the simulated 
+    path."""
+    X = tf.placeholder(tf.float32, shape=[num_x, None], name='X')
     return X
 
-# --------------------------------------------------------------------------- #
-# Initialize the NN parameters
-# --------------------------------------------------------------------------- #
-def initialize_NN_parameters(layers_dim):
-    "Initialize parameters to build a neural network with tensorflow"
+
+def initialize_parameters(layers_dim):
+    """ Initialize parameters to build a neural network
+    1: [num_input, None] -> [num_hidden1, None] 
+    2: [num_hidden1, None] -> [num_hidden2, None] 
+    3: [num_hidden2, None] -> [num_output, None] """
 
     W1 = tf.get_variable('W1', [layers_dim[1], layers_dim[0]], tf.float32,
                          tf.contrib.layers.xavier_initializer())
-    b1 = tf.get_variable('b1', [layers_dim[1], 1], tf.float32,
+    b1 = tf.get_variable('b1', [layers_dim[1], 1], tf.float32, 
                          tf.zeros_initializer())
     W2 = tf.get_variable('W2', [layers_dim[2], layers_dim[1]], tf.float32,
                          tf.contrib.layers.xavier_initializer())
@@ -59,27 +81,13 @@ def initialize_NN_parameters(layers_dim):
                          tf.zeros_initializer())
     W3 = tf.get_variable('W3', [layers_dim[3], layers_dim[2]], tf.float32,
                          tf.contrib.layers.xavier_initializer())
-    b3 = tf.get_variable('b3', [layers_dim[3], 1], tf.float32,
+    b3 = tf.get_variable('b3', [layers_dim[3], 1], tf.float32, 
                          tf.zeros_initializer())
 
     parameters = {'W1': W1, 'b1': b1, 'W2': W2, 'b2': b2, 'W3': W3, 'b3': b3}
     return parameters
 
-# Test
-layers_dim = [1, 100, 100, 2]
-tf.reset_default_graph()
-with tf.Session() as sess:
-    parameters = initialize_NN_parameters(layers_dim)
-print(r'Parameter W1 is {}'.format(parameters['W1']))
-print(r'Parameter b1 is {}'.format(parameters['b1']))
-print(r'Parameter W2 is {}'.format(parameters['W2']))
-print(r'Parameter b2 is {}'.format(parameters['b2']))
-print(r'Parameter W3 is {}'.format(parameters['W3']))
-print(r'Parameter b3 is {}'.format(parameters['b3']))
 
-# --------------------------------------------------------------------------- #
-# Forward propagation in tensorflow
-# --------------------------------------------------------------------------- #
 def forward_propagation(X, parameters):
     """ Implement the forward propagation for the model
     Linear -> RELU -> Linear -> RELU -> Linear -> Softplus """
@@ -91,79 +99,134 @@ def forward_propagation(X, parameters):
     W3 = parameters['W3']
     b3 = parameters['b3']
 
-    Z1 = tf.add(tf.matmul(W1, X), b1)
-    A1 = tf.nn.relu(Z1)
-    Z2 = tf.add(tf.matmul(W2, A1), b2)
-    A2 = tf.nn.relu(Z2)
-    Z3 = tf.add(tf.matmul(W3, A2), b3)
-    A3 = tf.nn.softplus(Z3)
+    Z1 = tf.add(tf.matmul(W1, X), b1)  # Linear combination
+    A1 = tf.nn.relu(Z1)  # Activate with Relu
+    Z2 = tf.add(tf.matmul(W2, A1), b2)  # Linear combination
+    A2 = tf.nn.relu(Z2)  # Activate with Relu
+    Z3 = tf.add(tf.matmul(W3, A2), b3)  # Linear combination
+    A3 = tf.nn.softplus(Z3)  # Activate with Relu
 
     return A3
 
-# Test
-tf.reset_default_graph()
-with tf.Session() as sess:
-    X = create_placeholders(layers_dim[0])
-    parameters = initialize_NN_parameters(layers_dim)
-    A3 = forward_propagation(X, parameters)
-    print("A3 = {}".format(A3))
 
-
-# --------------------------------------------------------------------------- #
-# Simulation
-# --------------------------------------------------------------------------- #
-def simulate(k0, T_length, parameters):
-    """ Simulate T periods economic paths
-    k0: Initial state
-    T_length: Length of the simulated time period
-    parameters: DNN parameters """
-
-    path = np.empty((2, T), dtype=np.float32)
-    path[0, 0] = k0  # Initialize the given capital stock
-
-    for t in range(0, T_length):
-        path[1, ]
-sys.exit(0)
 # --------------------------------------------------------------------------- #
 # Cost function
 # --------------------------------------------------------------------------- #
-# def compute_cost():
-#     """ Loss function, which is the mean of the sum of the squared relative 
-#     Euler error and the squared KKT error
-#     err_REE: relative Euler error
-#     err_KKT: KKT error """
-
-
-
-
-# # --------------------------------------------------------------------------- #
-# # Build the DNN model
-# # --------------------------------------------------------------------------- #
-# def model(learning_rate=0.0001, num_epochs=10, epsilon_tol=1e-3,
-#           print_cost=True)
-# --------------------------------------------------------------------------- #
-# Analytical solution is available
-# --------------------------------------------------------------------------- #
-# krange = np.linspace(1e-3, 10, 250)
-# krange = tf.convert_to_tensor(krange, dtype=tf.float32)
-
-# def kplus_analytic(k, beta, alpha, A):
-#     """ Optimal capital stock in the next period following the analytically
-#     derived rule"""
-#     _k = tf.placeholder(tf.float32)
-#     _kplus = tf.placeholder(tf.float32)
-#     _beta = tf.placeholder(tf.float32)
-#     _alpha = tf.placeholder(tf.float32)
-#     _A = tf.placeholder(tf.float32)
-#     with tf.Session() as sess:
-#         _kplus = sess.run(
-#             tf.math.multiply(
-#                 tf.math.multiply(_beta, _alpha),
-#                 tf.math.multiply(_A, tf.math.pow(_k, _alpha))),
-#             feed_dict={_k: k, _beta: beta, _alpha: alpha})
-#     return _kplus
-
-
-# plt.plot(krange, kplus_analytic(krange, beta, alpha, A))
-# plt.show()
+def compute_cost(X, A3, parameters, beta, A, alpha):
+    """ Compute the mean squared error
+    errREE: relative Euler error
+    errKKT: error in the KKT complementarity equation """
     
+    # Current capital state
+    k = X
+    
+    # Retlieve the simulation path
+    k_plus = tf.expand_dims(A3[0, :], axis=0)
+    lambd = tf.expand_dims(A3[1, :], axis=0)
+    
+    # Retlieve the optimal actions in the next period
+    action_plus = forward_propagation(k_plus, parameters)
+    k_plusplus = tf.expand_dims(action_plus[0, :], axis=0)
+    lambd_plus = tf.expand_dims(action_plus[1, :], axis=0)
+    
+    # Define the relative Euler error
+    errREE = (beta * lambd_plus * A * alpha * k_plus**(alpha-1)) / lambd - 1
+
+    # Define the KKT error
+    errKKT = lambd * (A * k**alpha - k_plus - 1/lambd)
+
+    # Stack two approximation errors
+    err = tf.stack([errREE[0], errKKT[0]])
+
+    # The two constraints are exactly binding
+    err_optimal = tf.zeros_like(err)
+    
+    # Define the cost function
+    cost = tf.losses.mean_squared_error(err, err_optimal)
+    
+    return cost
+
+# --------------------------------------------------------------------------- #
+# Training data
+# --------------------------------------------------------------------------- #
+train_X = np.random.uniform(kbeg, kend, (num_input, t_lentgh))
+print("train_X has a shape of {}".format(train_X.shape))
+
+# sys.exit(0)
+# --------------------------------------------------------------------------- #
+# Define DNN
+# --------------------------------------------------------------------------- #
+def model(train_X, simulate_X, layers_dim, learning_rate, num_iters,
+          print_span, print_cost=True):
+    """ Train DNN with the provided training data """
+
+    tf.reset_default_graph()  # Reset DNN
+    (num_input, t_length) = train_X.shape
+    costs = []  # Keep track of the cost
+    
+    # Create placeholder
+    X = create_placeholders(num_input)
+    # Initialize parameters
+    parameters = initialize_parameters(layers_dim)
+    
+    # One step of the forward propagation
+    A3 = forward_propagation(X, parameters)
+    # Compute the current cost
+    cost = compute_cost(X, A3, parameters, beta, A, alpha)
+    # Set the optimizer in the backward propagation
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(
+        cost)
+    # Initialize all the variables
+    init = tf.global_variables_initializer()
+
+    # ---------------------------------------------------------------------- #
+    # Start to train DNN
+    # ---------------------------------------------------------------------- #   
+    with tf.Session() as sess:
+        sess.run(init)  # Initialization
+
+        for i in range(1, num_iters+1):
+            _, _cost = sess.run([optimizer, cost], feed_dict={X: train_X})
+            costs.append(_cost)
+
+            # Print the cost every epoch
+            if print_cost is True and i % print_span == 0:
+                print(r'Cost after iteration {} is {:5f}'.format(i, _cost))
+                
+        # Save the parameters in a variable
+        parameters = sess.run(parameters)
+        print("Parameters have been trained")
+
+        action_star = sess.run(
+            forward_propagation(simulate_X.reshape(1, 250), parameters))
+        
+        return costs, parameters, action_star
+
+
+# --------------------------------------------------------------------------- #
+# Simulate the model
+# --------------------------------------------------------------------------- #
+costs, parameters_star, action_star = model(
+    train_X, kgrid, layers_dim, learning_rate=learning_rate, num_iters=num_iters,
+    print_span=10, print_cost=True)
+
+
+fig, ax = plt.subplots(figsize=(9, 6))
+ax.plot(kgrid, k_plus, 'k:', label="Analytic")
+ax.plot(kgrid, action_star[0, :], 'k-', label="DNN")
+ax.set_xlabel(r'$k_{t}$')
+ax.set_ylabel(r'$k_{t+1}$')
+ax.set_xlim([kbeg, kend])
+ax.set_ylim([0, None])
+plt.legend(loc='best')
+plt.savefig('k_plus.pdf')
+plt.close()
+
+fig, ax = plt.subplots(figsize=(9, 6))
+ax.plot(costs, 'k-')
+ax.set_xlabel(r'Number of iterations')
+ax.set_ylabel(r'Cost')
+ax.set_xlim([0, None])
+ax.set_ylim([0, None])
+plt.savefig('cost.pdf')
+plt.close()
