@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 """
-Filename: BM1972.py
+Filename: Brock_Mirman_1972.py
 Author(s): Takafumi Usui
 E-mail: u.takafumi@gmail.com
 Description:
@@ -10,6 +10,7 @@ Brock and Mirman (1972) in JET
 """
 import sys
 import tensorflow as tf
+from dnn_utils import random_mini_batches_X
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -19,13 +20,21 @@ print(r"Version of Tensorflow is {}".format(tf.__version__))
 # Parameter setting
 # --------------------------------------------------------------------------- #
 A = 1  # Technology level
-alpha = 0.3  # Capital share in the Cobb-Douglas production function
-beta = 0.95  # Discount factor
+alpha = 0.35 # Capital share in the Cobb-Douglas production function
+beta = 0.98  # Discount factor
 
 
 # --------------------------------------------------------------------------- #
 # Analytical solution
 # --------------------------------------------------------------------------- #
+def k_compute_infty(alpha, beta, A):
+    """ Return the stationary point (or steady state) """
+    return (1 / (beta * alpha * A))**(1/(alpha - 1))
+
+k_infty = k_compute_infty(alpha, beta, A)
+print("Stationary point is {}".format(k_infty))
+
+
 def k_plus_analytic(k, alpha, beta, A):
     """ Analytical solution
     Return the optimal capital stock in the next period """
@@ -39,6 +48,7 @@ kgrid = np.linspace(kbeg, kend, ksize, dtype=np.float32)
 # Capital stock in the next period
 k_plus = k_plus_analytic(kgrid, alpha, beta, A)
 
+# sys.exit(0)
 # --------------------------------------------------------------------------- #
 # Hyper parameters
 # --------------------------------------------------------------------------- #
@@ -53,7 +63,8 @@ print("Dimensions of each layer are {}".format(layers_dim))
 learning_rate = 0.001  # Leargning rate
 t_lentgh = 10000  # Simulation length
 
-num_iters = 2500
+num_epochs = 2500
+minibatch_size = 64
 # --------------------------------------------------------------------------- #
 # Create placeholders, initialize parameters, forward propagation
 # --------------------------------------------------------------------------- #
@@ -156,8 +167,8 @@ print("train_X has a shape of {}".format(train_X.shape))
 # --------------------------------------------------------------------------- #
 # Define DNN
 # --------------------------------------------------------------------------- #
-def model(train_X, simulate_X, layers_dim, learning_rate, num_iters,
-          print_span, print_cost=True):
+def model(train_X, simulate_X, layers_dim, learning_rate, num_epochs,
+          minibatch_size, print_span, print_cost=True):
     """ Train DNN with the provided training data """
 
     tf.reset_default_graph()  # Reset DNN
@@ -180,18 +191,30 @@ def model(train_X, simulate_X, layers_dim, learning_rate, num_iters,
     init = tf.global_variables_initializer()
 
     # ---------------------------------------------------------------------- #
-    # Start to train DNN
+    # Start to train DNN with random minibatches
     # ---------------------------------------------------------------------- #   
     with tf.Session() as sess:
         sess.run(init)  # Initialization
 
-        for i in range(1, num_iters+1):
-            _, _cost = sess.run([optimizer, cost], feed_dict={X: train_X})
-            costs.append(_cost)
+        for epoch in range(1, num_epochs+1):
+            epoch_cost = 0  # Initialize and trach the cost for each epoch
+            # Number of minibatch size
+            num_minibatches = int(t_length / minibatch_size)
+            minibatches = random_mini_batches_X(train_X, minibatch_size)
+
+            for minibatch in minibatches:
+                minibatch_X = minibatch
+                _, minibatch_cost = sess.run([optimizer, cost],
+                                             feed_dict={X: minibatch_X})
+                epoch_cost += minibatch_cost / num_minibatches
+
+            # Track the cost
+            costs.append(epoch_cost)
 
             # Print the cost every epoch
-            if print_cost is True and i % print_span == 0:
-                print(r'Cost after iteration {} is {:5f}'.format(i, _cost))
+            if print_cost is True and epoch % print_span == 0:
+                print(r'Cost after iteration {} is {:5f}'.format(
+                    epoch, epoch_cost))
                 
         # Save the parameters in a variable
         parameters = sess.run(parameters)
@@ -207,10 +230,14 @@ def model(train_X, simulate_X, layers_dim, learning_rate, num_iters,
 # Simulate the model
 # --------------------------------------------------------------------------- #
 costs, parameters_star, action_star = model(
-    train_X, kgrid, layers_dim, learning_rate=learning_rate, num_iters=num_iters,
+    train_X, kgrid, layers_dim, learning_rate=learning_rate,
+    num_epochs=num_epochs, minibatch_size=minibatch_size,
     print_span=10, print_cost=True)
 
 
+# --------------------------------------------------------------------------- #
+# Simulate the model
+# --------------------------------------------------------------------------- #
 fig, ax = plt.subplots(figsize=(9, 6))
 ax.plot(kgrid, k_plus, 'k:', label="Analytic")
 ax.plot(kgrid, action_star[0, :], 'k-', label="DNN")
