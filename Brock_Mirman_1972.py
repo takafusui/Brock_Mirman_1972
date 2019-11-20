@@ -23,10 +23,11 @@ print(r"Version of Tensorflow is {}".format(tf.__version__))
 
 # --------------------------------------------------------------------------- #
 # Parameter setting
+# No TFP shock
 # --------------------------------------------------------------------------- #
 A = 1  # Technology level
-alpha = 0.35  # Capital share in the Cobb-Douglas production function
-beta = 0.98  # Discount factor
+alpha = 0.36  # Capital share in the Cobb-Douglas production function
+beta = 0.99  # Discount factor
 
 
 # --------------------------------------------------------------------------- #
@@ -338,6 +339,9 @@ def model_sampling(
                 x_previous = train_X[0, t-1].reshape((num_input, 1))
                 train_X[0, t] = sess.run(A3, feed_dict={X: x_previous})[0]
 
+            # Keep the current training set
+            train_X_previous = train_X
+
             # --------------------------------------------------------------- #
             # Train DNN with the sampled state path
             # --------------------------------------------------------------- #
@@ -365,9 +369,13 @@ def model_sampling(
             # Track the episodic cost
             episodic_costs.append(episodic_cost)
 
-            # Trach the last state for the next episode
+            # Track the last state for the next episode
             init_state = train_X[0, -1]
-            train_X_previous = train_X
+
+            # Track the convergence process to the stationary point
+            if episode == 1 or episode % 5 == 0:
+                print("Cost after episode {} is {:3e}".format(
+                    episode, episodic_cost))
 
         # Save the parameters in a variable
         parameters = sess.run(parameters)
